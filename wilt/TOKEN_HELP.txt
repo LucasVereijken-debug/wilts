@@ -1,0 +1,19 @@
+WILT TOKEN + LIBRARY (plugged.host)
+
+1) .env in server root:
+   TOKEN=your_full_user_token
+   (no quotes, no Bot prefix, no spaces around =)
+
+2) Get token: Discord → F12 → Network → any api request → Request Headers → Authorization
+
+3) Library MUST be discord.py-self (not discord.py)
+   requirements.txt line: discord.py-self>=2.1.0,<3
+
+4) If Improper token + Intents True after reinstall:
+   delete site-packages/discord/ and discord_py_self-*.dist-info
+   keep discord_protos
+   restart so panel reinstalls ONLY discord.py-self
+
+5) Boot should show:
+   prefix='.'
+   logged in as your username

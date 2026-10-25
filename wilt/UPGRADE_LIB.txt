@@ -1,0 +1,23 @@
+Upgrade discord.py-self (wilt / byt2e)
+
+1. Use ONLY the official PyPI name:
+     pip install -U "discord.py-self[voice]"
+
+2. Current stable line: 2.1.0+ (Jan 2026 on PyPI)
+
+3. Never install:
+     - discord.py          (bot library — wrong for user tokens)
+     - pycord-self         (reported malicious mimic)
+     - random "discord-self" forks from unknown authors
+
+4. After upgrade, verify:
+     python -c "import discord; print(discord.__version__); print(hasattr(discord,'Spotify'))"
+
+5. Plugged.host: put the pip line in startup / requirements — no git needed for 2.1.0 from PyPI.
+
+6. If voice breaks: system ffmpeg + PyNaCl; optional discord.py-self[voice]
+
+7. Compatibility with wilt 3.0.5 / byt2e:
+     - commands.Bot + bot=False / user token login
+     - Activity / Spotify / ActivityAssets
+     - keep BYTE_SAFE=1 on byt2e

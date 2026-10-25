@@ -1,0 +1,869 @@
+import json
+import asyncio
+import os, sys, json, math, time, asyncio, signal
+import discord
+
+def _resolve_intents():
+    candidates = []
+    for path in (lambda: getattr(discord, 'Intents', None), lambda: getattr(getattr(discord, 'flags', None), 'Intents', None), lambda: __import__('discord.flags', fromlist=['Intents']).Intents if True else None):
+        try:
+            obj = path()
+            if obj is not None:
+                return obj
+        except Exception:
+            pass
+    return None
+_Intents = _resolve_intents()
+
+def _is_self_build() -> bool:
+    try:
+        path = str(getattr(discord, '__file__', '') or '')
+        ver = str(getattr(discord, '__version__', '') or '')
+        markers = 0
+        for name in ('Spotify', 'RelationshipType', 'FriendFlags', 'UserSettings'):
+            if hasattr(discord, name):
+                markers += 1
+        if 'discord_py_self' in path or 'discord.py-self' in path:
+            return True
+        try:
+            from discord import http as _http
+            src = getattr(_http, 'HTTPClient', None)
+            if src and 'bot' in str(getattr(src.static_login, '__code__', b'').co_varnames if hasattr(getattr(src, 'static_login', None), '__code__') else ()):
+                pass
+        except Exception:
+            pass
+        try:
+            import discord_protos
+            if markers >= 1:
+                return True
+        except Exception:
+            pass
+        if markers >= 2:
+            return True
+        return markers >= 1
+    except Exception:
+        return False
+if not _is_self_build():
+    print('[wilt] WARNING: this discord install may be upstream discord.py (bot-only)')
+    print('[wilt] user tokens will 401. delete site-packages/discord + install discord.py-self only')
+print('[wilt] discord', getattr(discord, '__file__', '?'), 'ver', getattr(discord, '__version__', '?'), 'Intents', _Intents is not None)
+from discord.ext import commands
+from dotenv import load_dotenv
+from pathlib import Path
+load_dotenv()
+load_dotenv('.env')
+load_dotenv('/home/container/.env')
+def _load_cfg():
+    try:
+        with open('config.json', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_cfg(cfg):
+    try:
+        with open('config.json', 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        print(f'[cfg] save failed: {e}')
+_cfg = _load_cfg()
+
+def _clean_token(raw):
+    if raw is None:
+        return ''
+    t = str(raw).strip()
+    for _ in range(3):
+        if len(t) >= 2 and t[0] == t[-1] and (t[0] in ("'", '"', '`')):
+            t = t[1:-1].strip()
+        else:
+            break
+    for pfx in ('Bot ', 'Bearer ', 'bot ', 'bearer '):
+        if t.startswith(pfx):
+            t = t[len(pfx):].strip()
+    for ch in ('\r', '\n', '\t', '\ufeff'):
+        t = t.replace(ch, '')
+    t = t.strip()
+    return t
+
+def _load_token():
+    cands = []
+    for path in ('.env', '/home/container/.env'):
+        try:
+            p = Path(path)
+            if not p.is_file():
+                continue
+            for line in p.read_text(encoding='utf-8', errors='replace').splitlines():
+                s = line.strip()
+                if not s or s.startswith('#'):
+                    continue
+                up = s.upper()
+                if up.startswith('TOKEN=') or up.startswith('USER_TOKEN=') or up.startswith('DISCORD_TOKEN='):
+                    cands.append((path, s.split('=', 1)[1]))
+                    break
+        except Exception as e:
+            print('[wilt] env read', path, e)
+    for key in ('TOKEN', 'USER_TOKEN', 'DISCORD_TOKEN'):
+        v = os.environ.get(key)
+        if v:
+            cands.append(('env:' + key, v))
+    try:
+        cfg = _load_cfg()
+        if isinstance(cfg, dict):
+            for key in ('token', 'TOKEN', 'user_token'):
+                if cfg.get(key):
+                    cands.append(('config', cfg[key]))
+    except Exception:
+        pass
+    for src, raw in cands:
+        t = _clean_token(raw)
+        if len(t) > 50:
+            print('[wilt] token from', src, 'len=', len(t), 'dots=', t.count('.'))
+            return t
+    return ''
+TOKEN = _load_token()
+VERSION = '3.8.5'
+ESC = '\x1b'
+RESET = f'{ESC}[0m'
+GREY = f'{ESC}[2;37m'
+WHITE = f'{ESC}[1;37m'
+CYAN = f'{ESC}[36m'
+GREEN = f'{ESC}[32m'
+RED = f'{ESC}[31m'
+YELLOW = f'{ESC}[33m'
+BLUE = f'{ESC}[34m'
+DIM = f'{ESC}[2m'
+DARK = f'{ESC}[30m'
+BOLD = f'{ESC}[1m'
+CYAN2 = f'{ESC}[0;36m'
+WHITE2 = f'{ESC}[0;37m'
+BLUE2 = f'{ESC}[0;34m'
+BRAND = f'{ESC}[0;35m{ESC}[1m{ESC}[4m'
+
+def _get_prefix(bot, message):
+    from cogs import state as S
+    try:
+        gid = str(getattr(message.guild, 'id', '')) if message.guild else ''
+        if gid and isinstance(getattr(S, '_server_prefixes', None), dict) and (gid in S._server_prefixes):
+            p = S._server_prefixes[gid]
+            if isinstance(p, str) and p:
+                return p
+    except Exception:
+        pass
+    p = getattr(S, 'PREFIX', '.')
+    if callable(p):
+        p = '.'
+    if isinstance(p, (list, tuple)):
+        p = p[0] if p else '.'
+    if not isinstance(p, str) or not p:
+        p = '.'
+    return p
+try:
+    from utils.gateway import (
+        client_properties as _gw_props,
+        apply_http_headers as _gw_headers,
+        install_ws_identify_patch as _gw_ws_patch,
+        encode_super_properties as _gw_xsp,
+        DEFAULT_CAPABILITIES as _GW_CAPS,
+    )
+    _GW_PROPS = _gw_props(platform='desktop')
+    _GW_PROPS['has_client_mods'] = False
+    _GW_PROPS['client_app_state'] = 'focused'
+    _gw_ws_patch(_GW_PROPS, capabilities=_GW_CAPS)
+    try:
+        from cogs import state as _S0
+        _S0.USER_AGENT = _GW_PROPS.get('browser_user_agent') or _S0.USER_AGENT
+        _S0.X_SUPER_PROPERTIES = _gw_xsp(_GW_PROPS)
+        _S0.CHROME_VERSION = '155.0.8059.80'
+    except Exception:
+        pass
+except Exception as _gw_e:
+    print(f'[wilt] gateway utils: {_gw_e}')
+    _GW_PROPS = None
+    _GW_CAPS = 0
+
+    def _gw_headers(*a, **k):
+        return False
+
+class WiltBot(commands.Bot):
+
+    def __init__(self):
+        kwargs = {'command_prefix': _get_prefix, 'help_command': None, 'chunk_guilds_at_startup': False, 'sync_presence': False}
+        intents = None
+        try:
+            IntentsCls = None
+            try:
+                IntentsCls = getattr(discord, 'Intents', None) or _resolve_intents()
+            except Exception:
+                IntentsCls = None
+            if IntentsCls is not None:
+                intents = IntentsCls.default()
+                for flag in ('message_content', 'members', 'guilds', 'dm_messages', 'presences'):
+                    try:
+                        setattr(intents, flag, True)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f'[wilt] Intents unavailable: {e}')
+            intents = None
+        if intents is not None:
+            kwargs['intents'] = intents
+        for key, val in (('self_bot', True), ('bot', False)):
+            try:
+                kwargs[key] = val
+                break
+            except Exception:
+                pass
+        attempts = []
+        if intents is not None:
+            attempts.append({**kwargs, 'intents': intents, 'self_bot': True, 'sync_presence': False})
+            attempts.append({**kwargs, 'intents': intents})
+        attempts.append({**kwargs, 'self_bot': True, 'sync_presence': False})
+        attempts.append({'command_prefix': _get_prefix, 'self_bot': True, 'sync_presence': False})
+        attempts.append({'command_prefix': _get_prefix})
+        if intents is not None:
+            attempts.append({'command_prefix': _get_prefix, 'intents': intents})
+        last = None
+        for kw in attempts:
+            try:
+                super().__init__(**kw)
+                print(f'[wilt] Bot init ok keys={list(kw.keys())}')
+                break
+            except TypeError as e:
+                last = e
+                continue
+        else:
+            raise TypeError(f'WiltBot init failed: {last}')
+        self._wilt_delete_ids = set()
+        try:
+            self._force_http_ipv4()
+        except Exception:
+            pass
+
+    def _force_http_ipv4(self):
+        import socket
+        try:
+            import aiohttp
+        except Exception:
+            return
+        http = getattr(self, 'http', None)
+        if http is None:
+            return
+        try:
+            connector = aiohttp.TCPConnector(family=socket.AF_INET, ttl_dns_cache=300, ssl=True)
+            session = getattr(http, '_HTTPClient__session', None) or getattr(http, 'session', None)
+            # discord.py creates session lazily; store connector for later if possible
+            if hasattr(http, 'connector'):
+                http.connector = connector
+            self._wilt_ipv4_connector = connector
+        except Exception as e:
+            print('[wilt] http ipv4 connector:', e)
+
+    async def before_identify_hook(self, *, initial=False):
+        try:
+            if _GW_PROPS is not None:
+                _gw_headers(self, _GW_PROPS)
+                _gw_ws_patch(_GW_PROPS, capabilities=_GW_CAPS)
+        except Exception:
+            pass
+        try:
+            return await super().before_identify_hook(initial=initial)
+        except Exception:
+            return None
+
+    async def _load_one(self, cog: str):
+        try:
+            if cog in getattr(self, 'extensions', {}):
+                return 'skip'
+            await asyncio.wait_for(self.load_extension(cog), timeout=12.0)
+            return 'ok'
+        except commands.ExtensionAlreadyLoaded:
+            return 'ok'
+        except asyncio.TimeoutError:
+            print(f'[boot] SKIP {cog}: load timeout')
+            return 'fail'
+        except commands.ExtensionFailed as e:
+            err = getattr(e, 'original', e)
+            msg = str(err)
+            if 'already an existing command' in msg or 'CommandRegistrationError' in type(err).__name__:
+                print(f'[boot] SKIP {cog}: command collision')
+            else:
+                print(f'[boot] SKIP {cog}: {err}')
+            return 'fail'
+        except Exception as e:
+            print(f'[boot] SKIP {cog}: {e}')
+            return 'fail'
+
+    async def _load_list(self, cogs, *, label='cogs'):
+        ok = fail = 0
+        seen = set()
+        for cog in cogs:
+            if cog in seen:
+                continue
+            seen.add(cog)
+            res = await self._load_one(cog)
+            if res == 'ok':
+                ok += 1
+            elif res == 'fail':
+                fail += 1
+        print(f'[boot] {label}: {ok} loaded, {fail} failed')
+        return ok, fail
+
+    async def _load_deferred(self):
+        DEFER = [
+            'cogs.auto', 'cogs.autoresponder', 'cogs.automod', 'cogs.backup', 'cogs.bumper',
+            'cogs.db', 'cogs.developer', 'cogs.downloads', 'cogs.filters', 'cogs.fun',
+            'cogs.pack', 'cogs.gc', 'cogs.guards', 'cogs.interactions', 'cogs.lastfm',
+            'cogs.loggers', 'cogs.mass', 'cogs.meta', 'cogs.monitor', 'cogs.nickname',
+            'cogs.nuke', 'cogs.perms', 'cogs.pingtrack', 'cogs.profile', 'cogs.profile_ext',
+            'cogs.protect', 'cogs.quests', 'cogs.rpc', 'cogs.reminders', 'cogs.rolemgmt',
+            'cogs.scheduler', 'cogs.scrape', 'cogs.search', 'cogs.social', 'cogs.spoofer',
+            'cogs.multispoof', 'cogs.status', 'cogs.tasks', 'cogs.tools', 'cogs.tracking',
+            'cogs.triggers', 'cogs.utility', 'cogs.voice', 'cogs.webhooks', 'cogs.ai',
+            'cogs.agc', 'cogs.cleardm', 'cogs.badge', 'cogs.serverclone', 'cogs.music',
+            'cogs.profilesteal', 'cogs.themes', 'cogs.widget', 'cogs.bot', 'cogs.botbridge', 'cogs.server',
+        ]
+        try:
+            await self.wait_until_ready()
+        except Exception:
+            pass
+        await asyncio.sleep(0.05)
+        print('[boot] loading deferred cogs...')
+        await self._load_list(DEFER, label='deferred')
+        print(f'[boot] total extensions: {len(getattr(self, "extensions", {}))}')
+
+    async def setup_hook(self):
+        try:
+            _gw_headers(self, _GW_PROPS)
+        except Exception as e:
+            print(f'[gateway] setup_hook headers: {e}')
+        CORE = [
+            'cogs.general', 'cogs.settings', 'cogs.information', 'cogs.afk',
+            'cogs.host', 'cogs.resilience', 'cogs.sniper',
+        ]
+        print('[boot] loading core cogs...')
+        await self._load_list(CORE, label='core')
+        try:
+            asyncio.get_running_loop().create_task(self._load_deferred(), name='wilt-defer-cogs')
+        except Exception as e:
+            print(f'[boot] defer schedule fail: {e}')
+            DEFER_ALL = [
+                'cogs.auto', 'cogs.autoresponder', 'cogs.automod', 'cogs.backup', 'cogs.bumper',
+                'cogs.db', 'cogs.developer', 'cogs.downloads', 'cogs.filters', 'cogs.fun',
+                'cogs.pack', 'cogs.gc', 'cogs.guards', 'cogs.interactions', 'cogs.lastfm',
+                'cogs.loggers', 'cogs.mass', 'cogs.meta', 'cogs.monitor', 'cogs.nickname',
+                'cogs.nuke', 'cogs.perms', 'cogs.pingtrack', 'cogs.profile', 'cogs.profile_ext',
+                'cogs.protect', 'cogs.quests', 'cogs.rpc', 'cogs.reminders', 'cogs.rolemgmt',
+                'cogs.scheduler', 'cogs.scrape', 'cogs.search', 'cogs.social', 'cogs.spoofer',
+                'cogs.multispoof', 'cogs.status', 'cogs.tasks', 'cogs.tools', 'cogs.tracking',
+                'cogs.triggers', 'cogs.utility', 'cogs.voice', 'cogs.webhooks', 'cogs.ai',
+                'cogs.agc', 'cogs.cleardm', 'cogs.badge', 'cogs.serverclone', 'cogs.music',
+                'cogs.profilesteal', 'cogs.themes', 'cogs.widget', 'cogs.bot', 'cogs.botbridge', 'cogs.server',
+            ]
+            await self._load_list(DEFER_ALL, label='fallback')
+
+    async def on_ready(self):
+        try:
+            if hasattr(S, "restore_loggers"):
+                S.restore_loggers()
+            if hasattr(S, "restore_captcha"):
+                S.restore_captcha()
+        except Exception:
+            pass
+        try:
+            _gw_headers(self, _GW_PROPS)
+        except Exception:
+            pass
+        from cogs import state as S
+        S.BOT = self
+        S.TOKEN = getattr(getattr(self, 'http', None), 'token', None) or S.TOKEN
+        S.PREFIX = _cfg.get("prefix", ".")
+        S.STEALTH_DELETE = bool(_cfg.get('stealth_delete', True))
+        S.GROQ_API_KEY = (os.environ.get('GROQ_API_KEY') or _cfg.get('GROQ_API_KEY') or '').strip()
+        S.OPENAI_API_KEY = (os.environ.get('OPENAI_API_KEY') or _cfg.get('OPENAI_API_KEY') or '').strip()
+        S.WHISPER_API_URL = (os.environ.get('WHISPER_API_URL') or _cfg.get('WHISPER_API_URL') or '').strip()
+        S.WHISPER_API_KEY = (os.environ.get('WHISPER_API_KEY') or _cfg.get('WHISPER_API_KEY') or '').strip()
+        S.STEALTH_DELETE_SECONDS = float(_cfg.get('stealth_delete_seconds', 5))
+        S._live_prefix[0] = S.PREFIX
+        try:
+            S.load_afk()
+        except Exception as e:
+            print(f'[wilt] load_afk: {e}')
+        try:
+            from cogs import state as S
+            S.TOKEN = getattr(getattr(self, 'http', None), 'token', None) or S.TOKEN
+            if not isinstance(getattr(S, 'PREFIX', None), str) or not S.PREFIX:
+                S.PREFIX = '.'
+            if isinstance(S.PREFIX, list):
+                S.PREFIX = S.PREFIX[0] if S.PREFIX else '.'
+            try:
+                cfg = S.load_config() if hasattr(S, 'load_config') else {}
+                if isinstance(cfg, dict) and isinstance(cfg.get("prefix"), str) and cfg['prefix']:
+                    S.PREFIX = cfg['prefix']
+            except Exception:
+                pass
+        except Exception:
+            pass
+        print(f'[wilt] v{VERSION} | {self.user} | {len(self.guilds)} guilds')
+        print(f'[wilt] stealth_delete={S.STEALTH_DELETE} prefix={S.PREFIX!r}')
+
+    def _schedule_stealth_delete(self, msg, delay: float | None=None):
+        if not msg:
+            return
+        mid = getattr(msg, 'id', None)
+        if mid is None:
+            return
+        ids = getattr(self, '_wilt_delete_ids', None)
+        if ids is None:
+            self._wilt_delete_ids = set()
+            ids = self._wilt_delete_ids
+        if mid in ids:
+            return
+        ids.add(mid)
+        if delay is None:
+            from cogs import state as S
+            delay = float(getattr(S, 'STEALTH_DELETE_SECONDS', 5) or 5)
+
+        async def _del():
+            await asyncio.sleep(delay)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+            finally:
+                try:
+                    self._wilt_delete_ids.discard(mid)
+                except Exception:
+                    pass
+        asyncio.create_task(_del())
+
+    async def on_command_completion(self, ctx):
+        from cogs import state as S
+        try:
+            if not getattr(S, 'STEALTH_DELETE', True):
+                return
+            if getattr(ctx, '_wilt_skip_delete', False):
+                return
+            self._schedule_stealth_delete(ctx.message)
+        except Exception as e:
+            print(f'[stealth-delete] {e}')
+
+    async def on_command_error(self, ctx, error):
+        from cogs import state as S
+        try:
+            if getattr(S, 'STEALTH_DELETE', True):
+                self._schedule_stealth_delete(getattr(ctx, 'message', None))
+        except Exception:
+            pass
+        if isinstance(error, commands.CommandNotFound):
+            return
+        if isinstance(error, (commands.CheckFailure, commands.DisabledCommand)):
+            return
+        if isinstance(error, commands.CommandOnCooldown):
+            try:
+                return await ctx.message.edit(content=f'```ansi\n  \x1b[31m✗\x1b[0m  cooldown: {error.retry_after:.1f}s\n```')
+            except Exception:
+                return
+        if isinstance(error, commands.MissingRequiredArgument):
+            try:
+                return await ctx.message.edit(content=f'```ansi\n  \x1b[31m✗\x1b[0m  missing argument: {error.param}\n```')
+            except Exception:
+                return
+        if isinstance(error, commands.BadArgument):
+            try:
+                return await ctx.message.edit(content=f'```ansi\n  \x1b[31m✗\x1b[0m  bad argument: {error}\n```')
+            except Exception:
+                return
+        if isinstance(error, commands.NoPrivateMessage):
+            try:
+                return await ctx.message.edit(content=f'```ansi\n  \x1b[31m✗\x1b[0m  guild only\n```')
+            except Exception:
+                return
+        err = getattr(error, 'original', error)
+        print(f'[error] {ctx.command}: {type(err).__name__}: {err}')
+
+    async def _dispatch_cog_event(self, event_name: str, *args, **kwargs):
+        for cog_name, cog in list(self.cogs.items()):
+            try:
+                listeners = getattr(cog, '__cog_listeners__', None) or []
+                for ev, method_name in listeners:
+                    if ev != event_name:
+                        continue
+                    meth = getattr(cog, method_name, None)
+                    if not meth:
+                        continue
+                    try:
+                        await meth(*args, **kwargs)
+                    except Exception as e:
+                        print(f'[listener {cog_name}.{method_name}] {e}')
+            except Exception as e:
+                print(f'[cog-dispatch {cog_name}] {e}')
+
+    async def on_message(self, message):
+        from cogs import state as S
+        await self._dispatch_cog_event('on_message', message)
+        if not self.user or message.author.id != self.user.id:
+            return
+        if not isinstance(getattr(S, 'PREFIX', None), str) or not S.PREFIX:
+            S.PREFIX = '.'
+        try:
+            ctx = await self.get_context(message)
+        except Exception as e:
+            print(f'[wilt] get_context: {e}')
+            ctx = None
+        if ctx is not None and ctx.command is not None:
+            try:
+                await self.invoke(ctx)
+            except Exception as e:
+                print(f'[wilt] invoke {ctx.command}: {e}')
+            try:
+                if getattr(S, 'STEALTH_DELETE', True):
+                    self._schedule_stealth_delete(message)
+            except Exception:
+                pass
+        else:
+            try:
+                await self.process_commands(message)
+            except Exception as e:
+                print(f'[wilt] process_commands: {e}')
+            try:
+                content = message.content or ''
+                pfx = getattr(S, 'PREFIX', '.')
+                if isinstance(pfx, str) and pfx and content.startswith(pfx) and (len(content) > len(pfx)):
+                    rest = content[len(pfx):].split()[:1]
+                    if rest and rest[0].replace('_', '').isalnum():
+                        print(f'[wilt] no command matched: {content[:60]!r}')
+            except Exception:
+                pass
+        try:
+            auto = self.get_cog('auto')
+            if auto is not None:
+                await auto._handle_self_message(message)
+        except Exception as e:
+            print(f'[auto] self-hook: {e}')
+
+    async def on_message_delete(self, message):
+        await self._dispatch_cog_event('on_message_delete', message)
+
+    async def on_message_edit(self, before, after):
+        await self._dispatch_cog_event('on_message_edit', before, after)
+
+    async def on_member_join(self, member):
+        await self._dispatch_cog_event('on_member_join', member)
+
+    async def on_member_remove(self, member):
+        await self._dispatch_cog_event('on_member_remove', member)
+
+    async def on_guild_channel_delete(self, channel):
+        await self._dispatch_cog_event('on_guild_channel_delete', channel)
+
+    async def on_guild_update(self, before, after):
+        await self._dispatch_cog_event('on_guild_update', before, after)
+
+    async def on_group_join(self, channel, user):
+        await self._dispatch_cog_event('on_group_join', channel, user)
+
+    async def on_connect(self):
+        await self._dispatch_cog_event('on_connect')
+
+    async def on_disconnect(self):
+        await self._dispatch_cog_event('on_disconnect')
+
+    async def on_resumed(self):
+        await self._dispatch_cog_event('on_resumed')
+
+    async def on_rate_limit(self, *args, **kwargs):
+        try:
+            from cogs.antid import on_rate_limit as _arl
+            retry = 1.5
+            if args:
+                a0 = args[0]
+                retry = float(getattr(a0, 'retry_after', None) or getattr(a0, 'retryAfter', None) or retry)
+            await _arl(retry)
+        except Exception:
+            pass
+        await self._dispatch_cog_event('on_rate_limit', *args, **kwargs)
+
+    async def process_commands(self, message):
+        if not self.user or message.author.id != self.user.id:
+            return
+        await super().process_commands(message)
+client = WiltBot()
+CAT_ALIASES = {'quest': 'quests', 'questing': 'quests', 'presence': 'rpc', 'richpresence': 'rpc', 'spoof': 'spoofer', 'device': 'spoofer', 'vc': 'voice', 'dl': 'downloads', 'massdm': 'mass', 'mod': 'automod', 'clone': 'serverclone', 'info': 'information'}
+
+CATEGORY_ORDER = ['general', 'settings', 'meta', 'utility', 'tools', 'developer', 'status', 'rpc', 'spoofer', 'profile', 'profile_ext', 'profilesteal', 'badge', 'social', 'afk', 'auto', 'autoresponder', 'triggers', 'pack', 'fun', 'quests', 'sniper', 'voice', 'music', 'server', 'serverclone', 'mass', 'nuke', 'rolemgmt', 'guards', 'protect', 'automod', 'filters', 'perms', 'information', 'search', 'scrape', 'lastfm', 'loggers', 'tracking', 'pingtrack', 'monitor', 'host', 'bot', 'botbridge', 'gc', 'webhooks', 'cleanup', 'antiraid', 'reminders', 'scheduler', 'tasks', 'resilience', 'backup', 'bumper', 'agc', 'interactions', 'db', 'nickname', 'downloads', 'themes', 'ai', 'cleardm']
+CATEGORY_SHORT = {'general': 'core', 'settings': 'cfg', 'meta': 'meta', 'utility': 'util', 'tools': 'tools', 'developer': 'dev', 'status': 'status', 'rpc': 'rpc', 'spoofer': 'spoofer', 'profile': 'profile', 'profile_ext': 'profile+', 'profilesteal': 'psteal', 'badge': 'badge', 'social': 'social', 'afk': 'afk', 'auto': 'auto', 'autoresponder': 'ar', 'triggers': 'triggers', 'pack': 'pack', 'fun': 'fun', 'quests': 'quests', 'sniper': 'sniper', 'voice': 'voice', 'music': 'music', 'server': 'server', 'serverclone': 'clone', 'mass': 'mass', 'nuke': 'nuke', 'rolemgmt': 'roles', 'guards': 'guards', 'protect': 'protect', 'automod': 'amod', 'perms': 'perms', 'information': 'info', 'search': 'search', 'scrape': 'scrape', 'lastfm': 'lfm', 'loggers': 'loggers', 'tracking': 'tracking', 'pingtrack': 'pings', 'monitor': 'mon', 'host': 'host', 'bot': 'bot', 'botbridge': 'bridge', 'gc': 'gc', 'webhooks': 'hooks', 'cleardm': 'cdm', 'filters': 'filters', 'reminders': 'remind', 'scheduler': 'sched', 'tasks': 'tasks', 'resilience': 'res', 'backup': 'backup', 'bumper': 'bumper', 'agc': 'agc', 'interactions': 'ix', 'db': 'db', 'nickname': 'nick', 'downloads': 'dl', 'themes': 'themes', 'ai': 'ai'}
+
+@client.command(name='help', aliases=['h'])
+async def _help(ctx, *, query: str = ''):
+    from cogs import state as S
+    import math
+    raw = (query or '').strip().lower()
+    pfx = getattr(S, 'PREFIX', '.') or '.'
+    CPER, KPER = 10, 10
+    parts = raw.split()
+    page = 1
+    if parts and parts[-1].isdigit():
+        page = max(1, int(parts.pop()))
+    q = ' '.join(parts).strip()
+    if q in CAT_ALIASES:
+        q = CAT_ALIASES[q]
+
+    cats = {}
+    for cog in client.cogs.values():
+        cname = (cog.qualified_name or '').lower()
+        cmds = [c for c in cog.get_commands() if not getattr(c, 'hidden', False) and getattr(c, 'enabled', True)]
+        if cmds:
+            cats[cname] = sorted(cmds, key=lambda c: c.name)
+
+    async def _send(lines):
+        block = S._ansi_block(lines)
+        try:
+            return await ctx.message.edit(content=block)
+        except Exception:
+            return await S.safe_send(ctx.channel, block)
+
+    if not q:
+        seen, ordered = set(), []
+        for name in CATEGORY_ORDER:
+            if name in cats and name not in seen:
+                ordered.append(name)
+                seen.add(name)
+        for name in sorted(cats):
+            if name not in seen:
+                ordered.append(name)
+                seen.add(name)
+        total = sum(len(v) for v in cats.values())
+        pages = max(1, math.ceil(len(ordered) / KPER))
+        page = min(page, pages)
+        chunk = ordered[(page - 1) * KPER:page * KPER]
+
+        lines = [
+            f'{BRAND}wilt{RESET}  {DIM}v{VERSION}{RESET}  {GREY}· {total}cmds · {len(ordered)}cats{RESET}',
+            '',
+        ]
+        for name in chunk:
+            lines.append(f'  {CYAN}{name}{RESET}')
+        lines.append('')
+        if pages > 1:
+            nxt = page % pages + 1
+            lines.append(f'{DIM}{page}/{pages} · {pfx}h {nxt} · {pfx}h <cat> · {pfx}h <cmd>{RESET}')
+        else:
+            lines.append(f'{DIM}{pfx}h <cat> · {pfx}h <cmd>{RESET}')
+        return await _send(lines)
+
+    if q in cats:
+        cmds = cats[q]
+        pages = max(1, math.ceil(len(cmds) / CPER))
+        page = min(page, pages)
+        chunk = cmds[(page - 1) * CPER:page * CPER]
+        lines = [
+            f'{BRAND}wilt{RESET}  {CYAN}{q}{RESET}  {GREY}·  {len(cmds)} cmds{RESET}',
+            '',
+        ]
+        for c in chunk:
+            desc = (c.brief or (c.help or '').split('\n')[0] or '').strip()[:30]
+            lines.append(f'  {CYAN}{c.name:<13}{RESET} {DIM}{desc}{RESET}')
+        lines.append('')
+        if pages > 1:
+            nxt = page % pages + 1
+            lines.append(f'{DIM}  {page}/{pages}  ·  {pfx}h {q} {nxt}  ·  {pfx}h{RESET}')
+        else:
+            lines.append(f'{DIM}  {pfx}h{RESET}')
+        return await _send(lines)
+
+    cmd = client.get_command(q)
+    if cmd is not None:
+        cog_name = cmd.cog.qualified_name.lower() if cmd.cog else '-'
+        als = ', '.join(cmd.aliases[:5]) if cmd.aliases else '-'
+        sig = (cmd.signature or '').strip()[:36]
+        desc = (cmd.help or cmd.brief or '-').split('\n')[0][:70]
+        lines = [
+            f'{BRAND}wilt{RESET}  {CYAN}{pfx}{cmd.name}{RESET}  {DIM}{sig}{RESET}',
+            f'  {GREY}{desc}{RESET}',
+            f'  {DIM}{cog_name}  ·  {als}{RESET}',
+        ]
+        return await _send(lines)
+
+    all_cmds = []
+    for cog in client.cogs.values():
+        all_cmds.extend(cog.get_commands())
+    matches = [c for c in all_cmds if q in c.name.lower()][:8]
+    if matches:
+        lines = [f'{DIM}matches  {q}{RESET}', '']
+        for c in matches:
+            lines.append(f'  {CYAN}{pfx}{c.name}{RESET}')
+        lines.append('')
+        lines.append(f'{DIM}  {pfx}h{RESET}')
+        return await _send(lines)
+
+    return await _send([f'{RED}not found{RESET}  {DIM}{q}{RESET}', f'{DIM}  {pfx}h{RESET}'])
+
+
+
+async def _ping(ctx):
+    from cogs import state as S
+    ms = round(client.latency * 1000)
+    try:
+        hist = getattr(S, '_latency_history', None)
+        if hist is None:
+            S._latency_history = []
+            hist = S._latency_history
+        hist.append(ms)
+        if len(hist) > 50:
+            del hist[:-50]
+        avg = sum(hist) / len(hist)
+        await ctx.message.edit(content=S.ui_ok(f'pong - `{ms}ms` (avg `{avg:.0f}ms`)'))
+    except Exception:
+        await ctx.message.edit(content=S.ui_ok(f'pong - `{ms}ms`'))
+def _force_ipv4():
+    import socket
+    _orig = socket.getaddrinfo
+    def _ga(host, port, family=0, type=0, proto=0, flags=0):
+        infos = _orig(host, port, socket.AF_INET, type, proto, flags)
+        if infos:
+            return infos
+        return _orig(host, port, family, type, proto, flags)
+    socket.getaddrinfo = _ga
+    print('[wilt] ipv4 preference on')
+
+async def _preflight(token: str) -> bool:
+    import aiohttp
+    try:
+        from utils.gateway import default_headers, client_properties
+        headers = default_headers(token, client_properties(platform='desktop'))
+    except Exception:
+        headers = {
+            'Authorization': token,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9262 Chrome/155.0.8059.80 Electron/36.2.0 Safari/537.36',
+            'Accept': '*/*',
+            'Origin': 'https://discord.com',
+            'Referer': 'https://discord.com/channels/@me',
+        }
+    timeout = aiohttp.ClientTimeout(total=20)
+    urls = (
+        'https://discord.com/api/v9/gateway',
+        'https://discordapp.com/api/v9/gateway',
+    )
+    async with aiohttp.ClientSession(timeout=timeout) as s:
+        gw_ok = False
+        for url in urls:
+            for attempt in range(4):
+                try:
+                    async with s.get(url, headers={k: v for k, v in headers.items() if k != 'Authorization'}) as r:
+                        print('[wilt] preflight gateway %s status=%s try=%s' % (url.split('/')[2], r.status, attempt + 1))
+                        if r.status == 200:
+                            gw_ok = True
+                            break
+                        if r.status == 429:
+                            try:
+                                data = await r.json(content_type=None)
+                                wait = float(data.get('retry_after', 2 + attempt * 2))
+                            except Exception:
+                                wait = 2.0 + attempt * 2.5
+                            print('[wilt] CF/rate limit — sleep %.1fs' % wait)
+                            await asyncio.sleep(min(wait, 20))
+                            continue
+                        body = await r.text()
+                        if body.lstrip().lower().startswith('<!doctype') or '<html' in body[:80].lower():
+                            print('[wilt] cloudflare html challenge from this IP')
+                            await asyncio.sleep(2 + attempt)
+                            continue
+                        break
+                except Exception as e:
+                    print('[wilt] gateway try fail:', type(e).__name__, e)
+                    await asyncio.sleep(1 + attempt)
+            if gw_ok:
+                break
+        for attempt in range(4):
+            try:
+                async with s.get('https://discord.com/api/v9/users/@me', headers=headers) as r:
+                    print('[wilt] preflight @me status=%s try=%s' % (r.status, attempt + 1))
+                    if r.status == 200:
+                        d = await r.json()
+                        print('[wilt] preflight user=%s id=%s' % (d.get('username'), d.get('id')))
+                        return True
+                    if r.status in (401, 403):
+                        body = await r.text()
+                        print('[wilt] token rejected (%s): %s' % (r.status, body[:120]))
+                        return False
+                    if r.status == 429:
+                        try:
+                            data = await r.json(content_type=None)
+                            wait = float(data.get('retry_after', 3 + attempt * 3))
+                        except Exception:
+                            wait = 3.0 + attempt * 3
+                        print('[wilt] @me rate limited — sleep %.1fs' % wait)
+                        await asyncio.sleep(min(wait, 30))
+                        continue
+                    body = await r.text()
+                    if body.lstrip().lower().startswith('<!doctype'):
+                        print('[wilt] cloudflare blocking this host IP')
+                        await asyncio.sleep(3 + attempt * 2)
+                        continue
+                    print('[wilt] @me body=%s' % body[:160])
+                    return False
+            except Exception as e:
+                print('[wilt] @me fail:', type(e).__name__, e)
+                await asyncio.sleep(1 + attempt)
+    return False
+
+async def _async_start():
+    ok = await _preflight(TOKEN)
+    if not ok:
+        print('[wilt] preflight weak — retrying after brief pause')
+        await asyncio.sleep(3)
+    print('[wilt] login…')
+    for attempt in range(3):
+        try:
+            await asyncio.wait_for(client.login(TOKEN), timeout=90.0)
+            break
+        except asyncio.TimeoutError:
+            print('[wilt] login timed out try=%s' % (attempt + 1))
+            if attempt == 2:
+                print('[wilt] tip: this plugged node is CF-blocked for Discord — switch server/region')
+                raise SystemExit(2)
+            await asyncio.sleep(5 * (attempt + 1))
+        except TypeError:
+            try:
+                await asyncio.wait_for(client.login(TOKEN, bot=False), timeout=90.0)
+                break
+            except Exception as e:
+                print('[wilt] login failed:', type(e).__name__, e)
+                raise SystemExit(2)
+        except Exception as e:
+            msg = str(e)
+            print('[wilt] login failed try=%s: %s %s' % (attempt + 1, type(e).__name__, e))
+            if '401' in msg or 'Unauthorized' in msg:
+                print('[wilt] use a fresh USER token (Network → Authorization). not a bot token.')
+                raise SystemExit(2)
+            if attempt == 2:
+                raise SystemExit(2)
+            await asyncio.sleep(4 * (attempt + 1))
+    print('[wilt] login ok · user=%s' % (getattr(client, 'user', None),))
+    print('[wilt] gateway connect…')
+    try:
+        await client.connect(reconnect=True)
+    except Exception as e:
+        print('[wilt] connect failed:', type(e).__name__, e)
+        raise
+
+def main():
+    if not TOKEN:
+        sys.exit('TOKEN not set - put TOKEN=your_user_token in .env (no quotes)')
+    print('[wilt] starting client... len=%s dots=%s' % (len(TOKEN), TOKEN.count('.')))
+    try:
+        _force_ipv4()
+    except Exception as e:
+        print('[wilt] ipv4 patch skip:', e)
+    try:
+        asyncio.run(_async_start())
+    except KeyboardInterrupt:
+        print('[wilt] stopped')
+    except SystemExit:
+        raise
+    except Exception as e:
+        print('[wilt] fatal:', type(e).__name__, e)
+        raise
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,12 @@
+wilt + byt2e merge (wilt core)
+
+Base: wilt selfbot (state.py, antid, all wilt cogs)
+Added from byt2e (adapted): fun/utility cogs listed in selfbot COGS with names like ttt_cog, pack, rizz, etc.
+Shims: utils/general.py, utils/rate_limiter.py (no Mongo, no EventManager)
+
+Not merged (architecture conflict):
+- byt2e main.py / BotManager / ConfigManager / Mongo
+- byt2e help/afk/host/mass (wilt already has equivalents)
+
+Start: python selfbot.py
+Env: TOKEN=...
